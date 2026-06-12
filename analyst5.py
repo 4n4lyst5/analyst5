@@ -93,9 +93,14 @@ def _codex_ok() -> bool:
     return os.path.exists(CODEX_BIN) and os.path.isdir(codex_home)
 
 
+def _gmail_ok() -> bool:
+    from pathlib import Path
+    return (Path.home() / ".analyst5" / "gmail_token.json").exists()
+
+
 def cmd_status():
     table = Table(title="État des workers Analyst5", border_style="cyan")
-    table.add_column("Worker", style="bold")
+    table.add_column("Capacité", style="bold")
     table.add_column("Statut")
     table.add_column("Auth")
     table.add_row("Claude",
@@ -107,6 +112,9 @@ def cmd_status():
     table.add_row("OpenAI",
                   "[green]✓ connecté[/green]" if _codex_ok() else "[red]✗[/red]",
                   "compte OpenAI (codex CLI)" if _codex_ok() else "lance: codex login")
+    table.add_row("Gmail",
+                  "[green]✓ connecté[/green]" if _gmail_ok() else "[yellow]⚠ non auth[/yellow]",
+                  "compte Google (OAuth)" if _gmail_ok() else "lance: analyst5 auth gmail")
     console.print(table)
 
 
@@ -118,6 +126,12 @@ def cmd_auth(provider: str):
         console.print("Gemini utilise son propre CLI. Lance : [cyan]~/.local/bin/gemini[/cyan]")
     elif provider == "openai":
         console.print("OpenAI utilise Codex CLI. Lance : [cyan]~/.local/bin/codex login[/cyan]")
+    elif provider == "gmail":
+        from tools.gmail import authenticate, is_authenticated
+        if is_authenticated():
+            console.print("[green]✓ Gmail déjà authentifié[/green]")
+        else:
+            authenticate()
     else:
         console.print(f"[red]Provider inconnu : {provider}[/red]")
 

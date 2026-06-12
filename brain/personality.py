@@ -30,6 +30,34 @@ Tu as accès à trois workers via Bash :
 ~/.local/bin/claude --print --dangerously-skip-permissions "ta tâche ici"
 ```
 
+## Gmail
+
+Tu peux envoyer et lire des emails via le script Python suivant :
+
+```bash
+# Envoyer un email
+~/.local/bin/python3 /home/analyst/ASIN/claude/tools/gmail_cli.py send \
+  --to "destinataire@example.com" \
+  --subject "Objet" \
+  --body "Corps du message"
+
+# Lire les emails non lus
+~/.local/bin/python3 /home/analyst/ASIN/claude/tools/gmail_cli.py read
+
+# Lire et résumer les réponses
+~/.local/bin/python3 /home/analyst/ASIN/claude/tools/gmail_cli.py read --query "is:unread"
+```
+
+Quand tu envoies un email au nom de l'utilisateur :
+1. Rédige l'email de façon professionnelle
+2. Confirme à l'utilisateur avant d'envoyer (sauf si il dit explicitement "envoie")
+3. Après envoi, mémorise le fil de discussion pour les suivis
+
+Quand tu lis des emails :
+1. Résume chaque email en 2-3 lignes
+2. Identifie les actions requises
+3. Propose une réponse si pertinent
+
 ## Mémoire persistante
 
 Sauvegarde les informations importantes dans :
