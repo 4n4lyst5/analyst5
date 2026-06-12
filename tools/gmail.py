@@ -1,163 +1,108 @@
 """
-Gmail tool pour Analyst5 — envoyer, lire, résumer des emails.
-Auth OAuth Google stockée dans ~/.analyst5/gmail_token.json
+Gmail tool pour Analyst5 — SMTP (envoi) + IMAP (lecture).
+Auth via mot de passe d'application Google (pas d'OAuth requis).
+Credentials stockés dans ~/.analyst5/gmail_creds.json
 """
 import os
 import json
-import base64
-import re
-from pathlib import Path
+import smtplib
+import imaplib
+import email
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from email.header import decode_header
+from pathlib import Path
 
-CREDENTIALS_PATH = Path.home() / ".analyst5" / "gmail_token.json"
-CLIENT_FILE      = Path.home() / ".analyst5" / "gmail_client.json"
+CREDS_PATH = Path.home() / ".analyst5" / "gmail_creds.json"
 
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.modify",
-]
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+IMAP_HOST = "imap.gmail.com"
+IMAP_PORT = 993
 
 
 def is_authenticated() -> bool:
-    return CREDENTIALS_PATH.exists()
+    return CREDS_PATH.exists()
 
 
 def authenticate():
-    """Lance le flow OAuth Google pour Gmail (ouvre le navigateur)."""
-    from google_auth_oauthlib.flow import InstalledAppFlow
-
-    if not CLIENT_FILE.exists():
-        # Créer un client OAuth minimal via la console Google
-        print(f"""
+    """Enregistre l'adresse Gmail et le mot de passe d'application."""
+    print("""
 Pour connecter Gmail à Analyst5 :
 
-1. Va sur https://console.cloud.google.com/
-2. Crée un projet (ou réutilise un existant)
-3. Active l'API Gmail
-4. Crée des identifiants OAuth 2.0 → Application de bureau
-5. Télécharge le JSON → sauvegarde ici : {CLIENT_FILE}
-6. Relance : analyst5 auth gmail
-
-Alternative rapide : utilise le fichier OAuth Gemini si tu en as un.
+1. Va sur https://myaccount.google.com/apppasswords
+   (la 2FA doit être activée sur ton compte Google)
+2. Crée un mot de passe d'application → nom : "Analyst5"
+3. Copie le mot de passe généré (16 caractères)
 """)
-        return False
+    gmail_addr = input("Ton adresse Gmail : ").strip()
+    app_password = input("Mot de passe d'application (16 cars) : ").strip().replace(" ", "")
 
-    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_FILE), SCOPES)
-    creds = flow.run_local_server(port=0)
-
-    with open(CREDENTIALS_PATH, "w") as f:
-        f.write(creds.to_json())
-    os.chmod(CREDENTIALS_PATH, 0o600)
-    print(f"✓ Gmail authentifié — token sauvegardé dans {CREDENTIALS_PATH}")
+    CREDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(CREDS_PATH, "w") as f:
+        json.dump({"email": gmail_addr, "password": app_password}, f)
+    os.chmod(CREDS_PATH, 0o600)
+    print(f"✓ Gmail configuré pour {gmail_addr}")
     return True
 
 
-def _get_service():
-    """Retourne le service Gmail API authentifié."""
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
-
-    if not CREDENTIALS_PATH.exists():
-        raise RuntimeError("Gmail non authentifié. Lance : analyst5 auth gmail")
-
-    creds = Credentials.from_authorized_user_file(str(CREDENTIALS_PATH), SCOPES)
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(CREDENTIALS_PATH, "w") as f:
-            f.write(creds.to_json())
-
-    return build("gmail", "v1", credentials=creds)
+def _load_creds() -> dict:
+    if not CREDS_PATH.exists():
+        raise RuntimeError("Gmail non configuré. Lance : analyst5 auth gmail")
+    with open(CREDS_PATH) as f:
+        return json.load(f)
 
 
-def send_email(to: str, subject: str, body: str, reply_to_id: str = None) -> str:
-    """Envoie un email. Retourne l'ID du message envoyé."""
-    service = _get_service()
-
+def send_email(to: str, subject: str, body: str) -> str:
+    """Envoie un email via SMTP."""
+    creds = _load_creds()
     msg = MIMEMultipart("alternative")
+    msg["From"]    = creds["email"]
     msg["To"]      = to
     msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
+    msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    if reply_to_id:
-        msg["In-Reply-To"] = reply_to_id
-        msg["References"]  = reply_to_id
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.ehlo()
+        server.starttls()
+        server.login(creds["email"], creds["password"])
+        server.sendmail(creds["email"], to, msg.as_string())
 
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    result = service.users().messages().send(
-        userId="me",
-        body={"raw": raw, **({"threadId": reply_to_id} if reply_to_id else {})}
-    ).execute()
-
-    return f"Email envoyé — ID : {result['id']}"
+    return f"✓ Email envoyé à {to} — Objet : {subject}"
 
 
-def get_recent_emails(max_results: int = 10, query: str = "is:unread") -> list[dict]:
-    """Récupère les emails récents. Retourne une liste de dicts."""
-    service = _get_service()
-
-    results = service.users().messages().list(
-        userId="me", q=query, maxResults=max_results
-    ).execute()
-
-    messages = results.get("messages", [])
+def get_recent_emails(max_results: int = 10, folder: str = "INBOX", unread_only: bool = True) -> list[dict]:
+    """Lit les emails via IMAP."""
+    creds = _load_creds()
     emails = []
 
-    for msg_ref in messages:
-        msg = service.users().messages().get(
-            userId="me", id=msg_ref["id"], format="full"
-        ).execute()
+    with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT) as imap:
+        imap.login(creds["email"], creds["password"])
+        imap.select(folder)
 
-        headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
-        body = _extract_body(msg["payload"])
+        criteria = "UNSEEN" if unread_only else "ALL"
+        _, msg_ids = imap.search(None, criteria)
 
-        emails.append({
-            "id":      msg["id"],
-            "thread":  msg["threadId"],
-            "from":    headers.get("From", ""),
-            "to":      headers.get("To", ""),
-            "subject": headers.get("Subject", "(sans objet)"),
-            "date":    headers.get("Date", ""),
-            "body":    body[:2000],
-            "snippet": msg.get("snippet", ""),
-        })
+        ids = msg_ids[0].split()
+        # Prendre les N plus récents
+        for msg_id in reversed(ids[-max_results:]):
+            _, msg_data = imap.fetch(msg_id, "(RFC822)")
+            raw = msg_data[0][1]
+            msg = email.message_from_bytes(raw)
+
+            emails.append({
+                "id":      msg_id.decode(),
+                "from":    _decode_header(msg.get("From", "")),
+                "to":      _decode_header(msg.get("To", "")),
+                "subject": _decode_header(msg.get("Subject", "(sans objet)")),
+                "date":    msg.get("Date", ""),
+                "body":    _extract_body(msg)[:3000],
+            })
 
     return emails
 
 
-def get_thread(thread_id: str) -> list[dict]:
-    """Récupère tous les messages d'un fil de discussion."""
-    service = _get_service()
-    thread = service.users().threads().get(userId="me", id=thread_id).execute()
-
-    messages = []
-    for msg in thread.get("messages", []):
-        headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
-        messages.append({
-            "id":      msg["id"],
-            "from":    headers.get("From", ""),
-            "date":    headers.get("Date", ""),
-            "subject": headers.get("Subject", ""),
-            "body":    _extract_body(msg["payload"])[:3000],
-        })
-    return messages
-
-
-def mark_as_read(message_id: str):
-    """Marque un email comme lu."""
-    service = _get_service()
-    service.users().messages().modify(
-        userId="me", id=message_id,
-        body={"removeLabelIds": ["UNREAD"]}
-    ).execute()
-
-
 def format_emails_for_context(emails: list[dict]) -> str:
-    """Formate les emails pour les passer en contexte à un worker IA."""
     if not emails:
         return "Aucun email trouvé."
     lines = []
@@ -166,24 +111,30 @@ def format_emails_for_context(emails: list[dict]) -> str:
             f"[{i}] De: {e['from']}\n"
             f"    Objet: {e['subject']}\n"
             f"    Date: {e['date']}\n"
-            f"    ID: {e['id']} | Thread: {e['thread']}\n"
-            f"    {e['snippet']}\n"
+            f"    ---\n"
+            f"    {e['body'][:500]}\n"
         )
     return "\n".join(lines)
 
 
-def _extract_body(payload: dict) -> str:
-    """Extrait le corps texte d'un message Gmail."""
-    if "parts" in payload:
-        for part in payload["parts"]:
-            if part["mimeType"] == "text/plain":
-                data = part.get("body", {}).get("data", "")
-                return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-            if part["mimeType"] == "text/html":
-                data = part.get("body", {}).get("data", "")
-                html = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-                return re.sub(r"<[^>]+>", " ", html).strip()
-    data = payload.get("body", {}).get("data", "")
-    if data:
-        return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+def _decode_header(value: str) -> str:
+    parts = decode_header(value)
+    decoded = []
+    for part, enc in parts:
+        if isinstance(part, bytes):
+            decoded.append(part.decode(enc or "utf-8", errors="replace"))
+        else:
+            decoded.append(part)
+    return " ".join(decoded)
+
+
+def _extract_body(msg) -> str:
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            cd = str(part.get("Content-Disposition", ""))
+            if ct == "text/plain" and "attachment" not in cd:
+                return part.get_payload(decode=True).decode("utf-8", errors="replace")
+    else:
+        return msg.get_payload(decode=True).decode("utf-8", errors="replace")
     return ""
