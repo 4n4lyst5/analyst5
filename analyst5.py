@@ -39,6 +39,7 @@ def ask_with_session(user_message: str, memory_context: str, session_id: str = N
         CLAUDE_BIN,
         "--print",
         "--output-format", "json",
+        "--max-turns", "15",
         "--append-system-prompt", system,
     ]
     if os.getuid() != 0:
@@ -49,7 +50,7 @@ def ask_with_session(user_message: str, memory_context: str, session_id: str = N
 
     cmd.append(user_message)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
     try:
         data = json.loads(result.stdout)
