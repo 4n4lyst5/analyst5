@@ -127,6 +127,12 @@ def handle(message):
     if not user_text.strip():
         return
 
+    # Si l'utilisateur répond à un message spécifique, inclure le contexte
+    if message.reply_to_message:
+        quoted = message.reply_to_message.text or message.reply_to_message.caption or ""
+        if quoted:
+            user_text = f"[En réponse à ce message : \"{quoted[:500]}\"]\n\n{user_text}"
+
     stop_typing = threading.Event()
     t = threading.Thread(target=keep_typing, args=(message.chat.id, stop_typing), daemon=True)
     t.start()
