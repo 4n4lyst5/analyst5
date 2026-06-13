@@ -34,17 +34,14 @@ def ask_with_session(user_message: str, memory_context: str, session_id: str = N
     """
     system = ANALYST5_SYSTEM_PROMPT + f"\n\n## Mémoire\n\n{memory_context}"
 
-    is_root = os.getuid() == 0
     cmd = [
         CLAUDE_BIN,
         "--print",
         "--output-format", "json",
         "--append-system-prompt", system,
     ]
-    if not is_root:
+    if os.getuid() != 0:
         cmd.append("--dangerously-skip-permissions")
-    else:
-        cmd += ["--allowedTools", "Bash,Read,Write,Edit,Glob,Grep"]
 
     if session_id:
         cmd += ["--resume", session_id]
