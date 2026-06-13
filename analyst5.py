@@ -27,17 +27,17 @@ from brain.memory import load_memory, append_session_log
 console = Console()
 
 
-def ask(user_message: str, memory_context: str, session_id: str = None) -> str:
+def ask_with_session(user_message: str, memory_context: str, session_id: str = None) -> tuple[str, str]:
     """
-    Envoie un message à Analyst5 via le CLI claude.
-    Utilise --resume pour maintenir la session en mode interactif.
+    Envoie un message à Claude avec continuité de session.
+    Retourne (réponse, session_id) pour chaîner les tours.
     """
     system = ANALYST5_SYSTEM_PROMPT + f"\n\n## Mémoire\n\n{memory_context}"
 
     cmd = [
         CLAUDE_BIN,
         "--print",
-        "--output-format", "text",
+        "--output-format", "json",
         "--dangerously-skip-permissions",
         "--append-system-prompt", system,
     ]
@@ -48,28 +48,14 @@ def ask(user_message: str, memory_context: str, session_id: str = None) -> str:
     cmd.append(user_message)
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    return result.stdout.strip() or result.stderr.strip()
 
-
-def ask_streaming(user_message: str, memory_context: str, session_file: str) -> str:
-    """
-    Session persistante via fichier de session claude.
-    Retourne la réponse complète.
-    """
-    system = ANALYST5_SYSTEM_PROMPT + f"\n\n## Mémoire\n\n{memory_context}"
-
-    cmd = [
-        CLAUDE_BIN,
-        "--print",
-        "--output-format", "text",
-        "--dangerously-skip-permissions",
-        "--append-system-prompt", system,
-        user_message,
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    output = result.stdout.strip()
-    return output if output else result.stderr.strip()
+    try:
+        data = json.loads(result.stdout)
+        response = data.get("result", "").strip()
+        new_session_id = data.get("session_id", session_id or "")
+        return response or result.stderr.strip(), new_session_id
+    except (json.JSONDecodeError, AttributeError):
+        return result.stdout.strip() or result.stderr.strip(), session_id or ""
 
 
 # ─── Status ─────────────────────────────────────────────────────────────────
@@ -95,7 +81,7 @@ def _codex_ok() -> bool:
 
 def _gmail_ok() -> bool:
     from pathlib import Path
-    return (Path.home() / ".analyst5" / "gmail_token.json").exists()
+    return (Path.home() / ".analyst5" / "gmail_creds.json").exists()
 
 
 def cmd_status():
@@ -156,7 +142,7 @@ def main():
     if len(args) >= 2 and args[0] in ("-p", "--prompt"):
         prompt = " ".join(args[1:])
         console.print(f"[bold yellow]Analyst5[/bold yellow] [dim]→ traitement...[/dim]")
-        response = ask_streaming(prompt, memory_context, "")
+        response, _ = ask_with_session(prompt, memory_context)
         console.print(Markdown(response))
         append_session_log(prompt, response)
         return
@@ -164,11 +150,12 @@ def main():
     # Session interactive
     console.print(Panel(
         "[bold cyan]ANALYST5[/bold cyan] [dim]— Super-agent orchestrateur[/dim]\n"
-        "[dim]Claude · Gemini · OpenAI · Shell · Web · Mémoire[/dim]\n"
         "[dim]`status` pour voir les workers · `exit` pour quitter[/dim]",
         border_style="cyan",
     ))
     console.print("[dim]Mémoire chargée ✓[/dim]\n")
+
+    session_id = None  # maintenu tout au long de la session
 
     while True:
         try:
@@ -190,11 +177,10 @@ def main():
         console.print("[bold yellow]Analyst5[/bold yellow] [dim]→ traitement...[/dim]")
 
         try:
-            response = ask_streaming(user_input, memory_context, "")
+            response, session_id = ask_with_session(user_input, memory_context, session_id)
             console.print(f"\n[bold yellow]Analyst5[/bold yellow]")
             console.print(Markdown(response))
             append_session_log(user_input, response)
-            # Rafraîchir la mémoire après chaque tour (Analyst5 peut en avoir ajouté)
             memory_context = load_memory()
         except subprocess.TimeoutExpired:
             console.print("[red]Timeout — la tâche a pris trop de temps.[/red]")
