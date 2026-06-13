@@ -3,4 +3,4 @@
 SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
 DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
 source "$DIR/venv/bin/activate"
-python "$DIR/analyst5.py" "$@"
+python3 "$DIR/analyst5.py" "$@"
