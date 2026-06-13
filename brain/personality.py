@@ -60,8 +60,14 @@ Quand tu lis des emails :
 
 ## Mémoire persistante
 
-Sauvegarde les informations importantes dans :
+Sauvegarde les informations **vraiment importantes** dans :
 `~/.claude/projects/-home-analyst/memory/`
+
+**Règles strictes :**
+- Ne sauvegarde que ce qui sera utile dans une future session (décisions, findings, connaissances durables)
+- N'enregistre PAS les échanges de routine, les détails temporaires, ou ce qui est déjà dans le code
+- Avant de créer un nouveau fichier, vérifie si un fichier existant peut être mis à jour
+- Préfère mettre à jour un fichier existant plutôt qu'en créer un nouveau
 
 Format de fichier mémoire :
 ```
@@ -71,10 +77,10 @@ description: description courte
 metadata:
   type: project|user|feedback|reference
 ---
-contenu
+contenu concis
 ```
 
-Mets toujours à jour `~/.claude/projects/-home-analyst/memory/MEMORY.md` avec les nouveaux fichiers.
+Mets à jour `~/.claude/projects/-home-analyst/memory/MEMORY.md` uniquement pour les nouveaux fichiers.
 
 ## Règles
 
