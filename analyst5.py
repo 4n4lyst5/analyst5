@@ -32,7 +32,8 @@ def ask_with_session(user_message: str, memory_context: str, session_id: str = N
     Envoie un message à Claude avec continuité de session.
     Retourne (réponse, session_id) pour chaîner les tours.
     """
-    system = ANALYST5_SYSTEM_PROMPT + f"\n\n## Mémoire\n\n{memory_context}"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    system = ANALYST5_SYSTEM_PROMPT.replace("{{BASE_DIR}}", base_dir) + f"\n\n## Mémoire\n\n{memory_context}"
 
     cmd = [
         CLAUDE_BIN,
